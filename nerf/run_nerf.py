@@ -1210,7 +1210,7 @@ def train(env, flag, test_file, i_weights):
             image = np.array(image).astype(np.float32)
             target = image
             target = torch.Tensor(target).to(device)
-            target = normalize(target, p = 2, dim = -1)
+            #target = normalize(target, p = 2, dim = -1)
             #pose
             pose = dataloader_train[img_i]["pose"]
             pose = np.array(pose).astype(np.float32)
@@ -1290,7 +1290,7 @@ def train(env, flag, test_file, i_weights):
                                     verbose=i < 10, retraw=True,
                                     **render_kwargs_train, use_saliency= False, use_CLIP = True)
             rgb_est = ret_rgb_list[0]
-            rgb_est = normalize(rgb_est, p = 2, dim = -1)
+            #rgb_est = normalize(rgb_est, p = 2, dim = -1)
             clip_est = ret_clip_list[0]
             clip_est = normalize(clip_est, p = 2, dim = -1)
             print("rgb_s: ", rgb_s[0,:3])
