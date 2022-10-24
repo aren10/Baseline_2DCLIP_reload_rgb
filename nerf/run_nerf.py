@@ -504,9 +504,9 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
         weights: [num_rays, num_samples]. Weights assigned to each sampled color.
         depth_map: [num_rays]. Estimated distance to object.
     """
-    #raw2alpha = lambda raw, dists, act_fn=F.relu: 1.-torch.exp(-act_fn(raw)*dists)
+    raw2alpha_relu = lambda raw, dists, act_fn=F.relu: 1.-torch.exp(-act_fn(raw)*dists)
     #raw2alpha = lambda raw, dists, act_fn=torch.sigmoid: 1.-torch.exp(-act_fn(raw)*dists)
-    raw2alpha = lambda raw, dists, act_fn=torch.sigmoid: (1.-torch.exp(-act_fn(raw)*dists))
+    raw2alpha_sigmoid = lambda raw, dists, act_fn=torch.sigmoid: (1.-torch.exp(-act_fn(raw)*dists))
     #raw2alpha = lambda raw, dists, act_fn=torch.tanh: 1.-torch.exp(-act_fn(raw)*dists)
     dists = z_vals[...,1:] - z_vals[...,:-1]
     dists = torch.cat([dists, torch.Tensor([1e10]).expand(dists[...,:1].shape)], -1)  # [N_rays, N_samples]
@@ -521,7 +521,7 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
                 np.random.seed(0)
                 noise = np.random.rand(*list(raw[...,-1].shape)) * raw_noise_std
                 noise = torch.Tensor(noise)
-        alphaCLIP = raw2alpha(raw[...,-1] + noise, dists)  # [N_rays, N_samples] torch.Size([4096, 64])
+        alphaCLIP = raw2alpha_sigmoid(raw[...,-1] + noise, dists)  # [N_rays, N_samples] torch.Size([4096, 64])
         weightsCLIP = alphaCLIP * torch.cumprod(torch.cat([torch.ones((alphaCLIP.shape[0], 1)), 1.-alphaCLIP + 1e-10], -1), -1)[:, :-1]
 
         clip_map = torch.sum(weightsCLIP[...,None] * clip_s, -2)  # [N_rays, 768] torch.Size([4096, 768]) 
@@ -538,7 +538,7 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
                 np.random.seed(0)
                 noise = np.random.rand(*list(raw[...,3].shape)) * raw_noise_std
                 noise = torch.Tensor(noise)
-        alpha = raw2alpha(raw[...,3] + noise, dists)
+        alpha = raw2alpha_relu(raw[...,3] + noise, dists)
         weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
 
         rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
@@ -1301,7 +1301,7 @@ def train(env, flag, test_file, i_weights):
         #loss: dot product
         optimizer.zero_grad()
         if train_rgb:
-            img_loss = l1_loss(rgb_est, rgb_s)
+            img_loss = img2mse(rgb_est, rgb_s)
             print("training rgb_loss: ", img_loss)
             psnr = mse2psnr(img_loss)
             print("training rgb_psnr: ", psnr)
