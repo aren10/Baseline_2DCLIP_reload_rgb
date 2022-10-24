@@ -1301,7 +1301,7 @@ def train(env, flag, test_file, i_weights):
         #loss: dot product
         optimizer.zero_grad()
         if train_rgb:
-            img_loss = img2mse(rgb_est, rgb_s)
+            img_loss = l1_loss(rgb_est, rgb_s)
             print("training rgb_loss: ", img_loss)
             psnr = mse2psnr(img_loss)
             print("training rgb_psnr: ", psnr)
