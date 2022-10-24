@@ -316,29 +316,40 @@ def render_CLIP_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, s
         H = H//render_factor
         W = W//render_factor
         focal = focal/render_factor
+    rgb_ests = []
+    rgb_disps = []
     clips_ests = []
-    disps = []
+    clips_disps = []
     t = time.time()
     for i, c2w in enumerate(tqdm(render_poses)):
         #print(i, time.time() - t)
         t = time.time()
-        clips_est, disp, acc, _ = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs, use_CLIP=use_clip)
-        clips_ests.append(clips_est.cpu().numpy())
-        disps.append(disp.cpu().numpy())
+        ret_rgb_list, ret_clip_list = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs, use_CLIP=use_clip)
+        rgb_ests.append(ret_rgb_list[0].cpu().numpy())
+        rgb_disps.append(ret_rgb_list[1].cpu().numpy())
+        clips_ests.append(ret_clip_list[0].cpu().numpy())
+        clips_disps.append(ret_clip_list[1].cpu().numpy())
         """
         if gt_imgs is not None and render_factor==0:
             p = -10. * np.log10(np.mean(np.square(rgb.cpu().numpy() - gt_imgs[i])))
             print(p)
         """
+        """
         if savedir is not None:
-            np.save(savedir, '{:03d}_clips_est'.format(i), clips_est.cpu())
+            np.save(savedir, '{:03d}_clips_est'.format(i), clips_ests.cpu())
+            np.save(savedir, '{:03d}_clips_est'.format(i), clips_ests.cpu())
+        """
+        """
         if gt_imgs is not None:
             imgs = to8b(gt_imgs[-1])
             filename = os.path.join(savedir, '{:03d}_gt.png'.format(i))
             imageio.imwrite(filename, imgs)
+        """
+    rgb_ests = np.stack(clips_ests, 0)
+    rgb_disps = np.stack(clips_disps, 0)
     clips_ests = np.stack(clips_ests, 0)
-    disps = np.stack(disps, 0)
-    return clips_ests, disps
+    clips_disps = np.stack(clips_disps, 0)
+    return rgb_ests, rgb_disps, clips_ests, clips_disps
 
 
 def render_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0):
@@ -1064,7 +1075,7 @@ def train(env, flag, test_file, i_weights):
                 images.append(image)
                 images = np.array(images).astype(np.float32) # keep all 4 channels (RGBA)
                 images = torch.Tensor(images).to(device)
-                images = normalize(images, p = 2, dim = -1)
+                #images = normalize(images, p = 2, dim = -1)
                 #poses
                 poses = []
                 pose = dataloader_test[i]["pose"]
@@ -1086,11 +1097,14 @@ def train(env, flag, test_file, i_weights):
                     clips = torch.Tensor(clips).to(device)
                     clips = normalize(clips, p = 2, dim = -1)
                     #clips_ests
-                    clips_ests, _ = render_CLIP_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=None, savedir=testsavedir, render_factor=args.render_factor, use_clip = args.with_clip)
+                    rgbs_ests, rgbs_disps, clips_ests, clips_disps = render_CLIP_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=None, savedir=testsavedir, render_factor=args.render_factor, use_clip = args.with_clip)
                     clips_ests = torch.Tensor(clips_ests).to(device)
                     clips_ests = normalize(clips_ests, p = 2, dim = -1) #clips_ests_normalized = (clips_ests - torch.unsqueeze(torch.min(clips_ests,-1)[0],-1)) / (torch.unsqueeze(torch.max(clips_ests,-1)[0],-1) - torch.unsqueeze(torch.min(clips_ests,-1)[0],-1))
+                    rgbs_ests = torch.Tensor(rgbs_ests).to(device)
+                    #rgbs_ests = normalize(rgbs_ests, p = 2, dim = -1) 
                     #loss
-                    print("loss in test is: ", clip_loss(clips_ests[0,:,:,:], clips[0,:,:,:]))
+                    print("rgb_loss in test is: ", l1_loss(rgbs_ests[0,:,:,:], images[0,:,:,:]))
+                    print("clip_loss in test is: ", clip_loss(clips_ests[0,:,:,:], clips[0,:,:,:]))
                     #nerf_query_map
                     nerf_img_clip = torch.tensor(np.squeeze(clips_ests[0,:,:,:].cpu().detach().numpy()))
                     image_features_normalized = nerf_img_clip
@@ -1114,8 +1128,11 @@ def train(env, flag, test_file, i_weights):
                     query_map_3d[:,:,2] = query_map_remapped
                     plt.imshow(query_map_3d)
                     plt.imsave(args.root_path + "Nesf0_2D/nerf_query_map.png", query_map_3d)
+                    rgb_est_img = torch.tensor(np.squeeze(rgbs_ests[0,:,:,:].cpu().detach().numpy()))
+                    rgb_est_img_remapped = (rgb_est_img - np.min(rgb_est_img)) / (np.max(rgb_est_img) - np.min(rgb_est_img))
+                    plt.imsave(args.root_path + "Nesf0_2D/rgb_est_img.png", rgb_est_img_remapped)
                     #gt_query_map
-                    gt_img_clip = torch.tensor(np.squeeze(clips[0,:,:,:].cpu().detach().numpy()))
+                    gt_img_clip = np.squeeze(clips[0,:,:,:].cpu().detach().numpy())
                     image_features_normalized = gt_img_clip
                     image_features_normalized = image_features_normalized.to(torch.float) #text_features_normalized = (text_features - torch.min(text_features)) / (torch.max(text_features) - torch.min(text_features))
                     r,c,f = image_features_normalized.size()
@@ -1134,6 +1151,9 @@ def train(env, flag, test_file, i_weights):
                     query_map_3d[:,:,2] = query_map_remapped
                     plt.imshow(query_map_3d)
                     plt.imsave(args.root_path + "Nesf0_2D/gt_query_map.png", query_map_3d)
+                    rgb_gt_img = np.squeeze(images[0,:,:,:].cpu().detach().numpy())
+                    rgb_gt_img_remapped = (rgb_gt_img - np.min(rgb_gt_img)) / (np.max(rgb_gt_img) - np.min(rgb_gt_img))
+                    plt.imsave(args.root_path + "Nesf0_2D/rgb_gt_img.png", rgb_gt_img_remapped)
                 else:
                     rgbs, _ = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test, gt_imgs=images, savedir=testsavedir, render_factor=args.render_factor)
                     print('Done rendering', testsavedir)
