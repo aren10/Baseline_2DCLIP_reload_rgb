@@ -34,34 +34,58 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 np.random.seed(0)
 DEBUG = False
 
-
+"""
 def batchify(fn, chunk):
-    """Constructs a version of 'fn' that applies to smaller batches.
-    """
     # print("chunck: ", chunk)
     if chunk is None:
         return fn
     def ret(inputs):
         return torch.cat([fn(inputs[i:i+chunk]) for i in range(0, inputs.shape[0], chunk)], 0)
     return ret
+"""
+""""
+def batchify(fn, chunk):
+    # print("chunck: ", chunk)
+    if chunk is None:
+        return fn
+    def ret(inputs):
+        l = [fn(inputs[i:i+chunk]) for i in range(0, inputs.shape[0], chunk)]
+        print(len(l))
+        print(l[0].size())
+        res = torch.cat(l, 0)
+        print(res.size())
+        exit(0)
+        return torch.cat([fn(inputs[i:i+chunk]) for i in range(0, inputs.shape[0], chunk)], 0)
+    return ret
+"""
+def batchify(fn, chunk):
+    if chunk is None:
+        return fn
+    def ret(inputs):
+        l_rgb = []
+        l_clips = []
+        for i in range(0, inputs.shape[0], chunk):
+            outputs_rgb, outputs_clips = fn(inputs[i:i+chunk])
+            l_rgb.append(outputs_rgb)
+            l_clips.append(outputs_clips)
+        res_rgb = torch.cat(l_rgb, 0)
+        res_clips = torch.cat(l_clips, 0)
+        return res_rgb, res_clips
+    return ret
 
 
 def run_network(inputs, viewdirs, fn, embed_fn, embeddirs_fn, netchunk=1024*64):
-    """Prepares inputs and applies network 'fn'.
-    """
-    # viewdirs is None
-    inputs_flat = torch.reshape(inputs, [-1, inputs.shape[-1]]) #input shape torch.Size([4096, 64, 3]). Inputs have already considered view direction
-    embedded = embed_fn(inputs_flat) #torch.Size([262144, 63])
+    inputs_flat = torch.reshape(inputs, [-1, inputs.shape[-1]])
+    embedded = embed_fn(inputs_flat)
     if viewdirs is not None:
         input_dirs = viewdirs[:,None].expand(inputs.shape)
         input_dirs_flat = torch.reshape(input_dirs, [-1, input_dirs.shape[-1]])
         embedded_dirs = embeddirs_fn(input_dirs_flat)
         embedded = torch.cat([embedded, embedded_dirs], -1)
-    outputs_flat = batchify(fn, netchunk)(embedded)
-    # print("outputs_flat:", outputs_flat.shape)
-    outputs = torch.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
-    # print("outputs," ,outputs.shape)
-    return outputs
+    outputs_flat_rgb, outputs_flat_clips  = batchify(fn, netchunk)(embedded)
+    outputs_rgb = torch.reshape(outputs_flat_rgb, list(inputs.shape[:-1]) + [outputs_flat_rgb.shape[-1]])
+    outputs_clips = torch.reshape(outputs_flat_clips, list(inputs.shape[:-1]) + [outputs_flat_clips.shape[-1]])
+    return outputs_rgb, outputs_clips
 
 
 def render_rays(ray_batch,
@@ -130,43 +154,26 @@ def render_rays(ray_batch,
         lower = torch.cat([z_vals[...,:1], mids], -1)
         # stratified samples in those intervals
         t_rand = torch.rand(z_vals.shape)
-
         # Pytest, overwrite u with numpy's fixed random numbers
         if pytest:
             np.random.seed(0)
             t_rand = np.random.rand(*list(z_vals.shape))
             t_rand = torch.Tensor(t_rand)
-
         z_vals = lower + (upper - lower) * t_rand
-
     pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples, 3] torch.Size([4096, 64, 3])
-#     raw = run_network(pts)
-    #print("start raw")
-    raw = network_query_fn(pts, viewdirs, network_fn) # torch.Size([4096, 64, 769])
-    #print("____raw")
-    #print(raw)
-    #print(raw.size())
-    if use_saliency:
-        saliency_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest, saliency = True, clip = False)
-        rgb_map = saliency_map
-    elif use_CLIP:
-        clip_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest, saliency = False, clip = True)
-        rgb_map = clip_map
-    else:
-        rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest, saliency = False, clip = False)
-    #print("---------clip_map")
-    #print(clip_map)
-    #print(clip_map.size())
+    raw_rgb, raw_clips = network_query_fn(pts, viewdirs, network_fn) # torch.Size([4096, 64, 769])
+
+    rgb_map, rgb_disp_map, rgb_acc_map, rgb_weights, rgb_depth_map = raw2outputs(raw_rgb, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest, saliency = False, clip = False)
+    clip_map, clip_disp_map, clip_acc_map, clip_weights, clip_depth_map = raw2outputs(raw_clips, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest, saliency = False, clip = True)
+
+    """
     if N_importance > 0:
         rgb_map_0, disp_map_0, acc_map_0 = rgb_map, disp_map, acc_map
-
         z_vals_mid = .5 * (z_vals[...,1:] + z_vals[...,:-1])
         z_samples = sample_pdf(z_vals_mid, weights[...,1:-1], N_importance, det=(perturb==0.), pytest=pytest)
         z_samples = z_samples.detach()
-
         z_vals, _ = torch.sort(torch.cat([z_vals, z_samples], -1), -1)
         pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples + N_importance, 3]
-
         run_fn = network_fn if network_fine is None else network_fine
 #         raw = run_network(pts, fn=run_fn)
         raw = network_query_fn(pts, viewdirs, run_fn)
@@ -176,36 +183,50 @@ def render_rays(ray_batch,
             rgb_map = saliency_map
         else:
             rgb_map, disp_map, acc_map, weights, depth_map = raw2outputs(raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest)
-    ret = {'rgb_map' : rgb_map, 'disp_map' : disp_map, 'acc_map' : acc_map}
+    """
+    rgb_ret = {'rgb_map' : rgb_map, 'rgb_disp_map' : rgb_disp_map, 'rgb_acc_map' : rgb_acc_map}
+    clip_ret =  {'clip_map' : clip_map, 'clip_disp_map' : clip_disp_map, 'clip_acc_map' : clip_acc_map}
     if retraw:
-        ret['raw'] = raw
+        rgb_ret['raw_rgb'] = raw_rgb
+        clip_ret['raw_clips'] = raw_clips
+    """
     if N_importance > 0:
         ret['rgb0'] = rgb_map_0
         ret['disp0'] = disp_map_0
         ret['acc0'] = acc_map_0
         ret['z_std'] = torch.std(z_samples, dim=-1, unbiased=False)  # [N_rays]
-
-    for k in ret:
-        if (torch.isnan(ret[k]).any() or torch.isinf(ret[k]).any()) and DEBUG:
+    """
+    for k in rgb_ret:
+        if (torch.isnan(rgb_ret[k]).any() or torch.isinf(rgb_ret[k]).any()) and DEBUG:
             print(f"! [Numerical Error] {k} contains nan or inf.")
 
-    return ret
+    for k in clip_ret:
+        if (torch.isnan(clip_ret[k]).any() or torch.isinf(clip_ret[k]).any()) and DEBUG:
+            print(f"! [Numerical Error] {k} contains nan or inf.")
+
+    return rgb_ret, clip_ret
 
 
 def batchify_rays(rays_flat, chunk=1024*32, use_saliency = False, use_CLIP = False, **kwargs):
     """Render rays in smaller minibatches to avoid OOM.
     """
-    all_ret = {}
+    all_rgb_ret = {}
+    all_clip_ret = {}
     for i in range(0, rays_flat.shape[0], chunk):
         #print("i: ", i)
-        ret = render_rays(rays_flat[i:i+chunk],use_saliency = use_saliency, use_CLIP = use_CLIP, **kwargs)
-        for k in ret:
-            if k not in all_ret:
-                all_ret[k] = []
-            all_ret[k].append(ret[k])
+        rgb_ret, clip_ret = render_rays(rays_flat[i:i+chunk],use_saliency = use_saliency, use_CLIP = use_CLIP, **kwargs)
+        for k in rgb_ret:
+            if k not in all_rgb_ret:
+                all_rgb_ret[k] = []
+            all_rgb_ret[k].append(rgb_ret[k])
+        for k in clip_ret:
+            if k not in all_clip_ret:
+                all_clip_ret[k] = []
+            all_clip_ret[k].append(clip_ret[k])
 
-    all_ret = {k : torch.cat(all_ret[k], 0) for k in all_ret}
-    return all_ret
+    all_rgb_ret = {k : torch.cat(all_rgb_ret[k], 0) for k in all_rgb_ret}
+    all_clip_ret = {k : torch.cat(all_clip_ret[k], 0) for k in all_clip_ret}
+    return all_rgb_ret, all_clip_ret
 
 
 def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
@@ -268,15 +289,23 @@ def render(H, W, K, chunk=1024*32, rays=None, c2w=None, ndc=True,
         rays = torch.cat([rays, viewdirs], -1)
 
     # Render and reshape
-    all_ret = batchify_rays(rays, chunk, **kwargs, use_saliency = use_saliency, use_CLIP = use_CLIP)
-    for k in all_ret:
-        k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
-        all_ret[k] = torch.reshape(all_ret[k], k_sh)
+    all_rgb_ret, all_clip_ret = batchify_rays(rays, chunk, **kwargs, use_saliency = use_saliency, use_CLIP = use_CLIP)
 
-    k_extract = ['rgb_map', 'disp_map', 'acc_map']
-    ret_list = [all_ret[k] for k in k_extract]
-    ret_dict = {k : all_ret[k] for k in all_ret if k not in k_extract}
-    return ret_list + [ret_dict]
+    for k in all_rgb_ret:
+        k_sh = list(sh[:-1]) + list(all_rgb_ret[k].shape[1:])
+        all_rgb_ret[k] = torch.reshape(all_rgb_ret[k], k_sh)
+    for k in all_clip_ret:
+        k_sh = list(sh[:-1]) + list(all_clip_ret[k].shape[1:])
+        all_clip_ret[k] = torch.reshape(all_clip_ret[k], k_sh)
+
+    rgb_k_extract = ['rgb_map', 'rgb_disp_map', 'rgb_acc_map']
+    ret_rgb_list = [all_rgb_ret[k] for k in rgb_k_extract]
+    ret_rgb_dict = {k : all_rgb_ret[k] for k in all_rgb_ret if k not in rgb_k_extract}
+
+    clip_k_extract = ['clip_map', 'clip_disp_map', 'clip_acc_map']
+    ret_clip_list = [all_clip_ret[k] for k in clip_k_extract]
+    ret_clip_dict = {k : all_clip_ret[k] for k in all_clip_ret if k not in clip_k_extract}
+    return ret_rgb_list, ret_clip_list
 
 
 
@@ -479,92 +508,46 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
     #raw2alpha = lambda raw, dists, act_fn=torch.sigmoid: 1.-torch.exp(-act_fn(raw)*dists)
     raw2alpha = lambda raw, dists, act_fn=torch.sigmoid: (1.-torch.exp(-act_fn(raw)*dists))
     #raw2alpha = lambda raw, dists, act_fn=torch.tanh: 1.-torch.exp(-act_fn(raw)*dists)
-
     dists = z_vals[...,1:] - z_vals[...,:-1]
     dists = torch.cat([dists, torch.Tensor([1e10]).expand(dists[...,:1].shape)], -1)  # [N_rays, N_samples]
     dists = dists * torch.norm(rays_d[...,None,:], dim=-1)
-    if saliency:
-        saliency_s = torch.sigmoid(raw[...,0]) 
-        print("saliency shape:", saliency_s.shape)
-        noise = 0.
-        if raw_noise_std > 0.:
-            noise = torch.randn(raw[...,1].shape) * raw_noise_std
 
-            # Overwrite randomly sampled data if pytest
-            if pytest:
-                np.random.seed(0)
-                noise = np.random.rand(*list(raw[...,1].shape)) * raw_noise_std
-                noise = torch.Tensor(noise)
-        
-        alphaS = raw2alpha(raw[...,1] + noise, dists)
-        weightsS = alphaS * torch.cumprod(torch.cat([torch.ones((alphaS.shape[0], 1)), 1.-alphaS + 1e-10], -1), -1)[:, :-1]
-        print("weight shape:", weightsS.shape)
-        saliency_s = torch.reshape(saliency_s,(saliency_s.shape[0],saliency_s.shape[1],1))
-        saliency_map = torch.sum(weightsS[...,None] * saliency_s, -2)  # [N_rays, 1]
-
-        depth_map = torch.sum(weightsS * z_vals, -1)
-        disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weightsS, -1))
-        acc_map = torch.sum(weightsS, -1)
-    
-    elif clip:
-
+    if clip:
         clip_s = torch.tanh(raw[...,:-1])
-        #print("------raw")
-        #print(raw)
-        #print("____clip_s")
-        #print(clip_s)
-        #print(clip_s.size())
         noise = 0.
         if raw_noise_std > 0.:
             noise = torch.randn(raw[...,-1].shape) * raw_noise_std
-
-            # Overwrite randomly sampled data if pytest
             if pytest:
                 np.random.seed(0)
                 noise = np.random.rand(*list(raw[...,-1].shape)) * raw_noise_std
                 noise = torch.Tensor(noise)
         alphaCLIP = raw2alpha(raw[...,-1] + noise, dists)  # [N_rays, N_samples] torch.Size([4096, 64])
-        #print("____raw[...,-1]")
-        #print(raw[...,-1])
-        #print(raw[...,-1].size())
-        #print("____alphaCLIP")
-        #print(alphaCLIP)
-        #print(alphaCLIP.size())
-        # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
         weightsCLIP = alphaCLIP * torch.cumprod(torch.cat([torch.ones((alphaCLIP.shape[0], 1)), 1.-alphaCLIP + 1e-10], -1), -1)[:, :-1]
-        #print(weightsCLIP)
+
         clip_map = torch.sum(weightsCLIP[...,None] * clip_s, -2)  # [N_rays, 768] torch.Size([4096, 768]) 
         depth_map = torch.sum(weightsCLIP * z_vals, -1)
         disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weightsCLIP, -1))
         acc_map = torch.sum(weightsCLIP, -1)
 
     else:
-        rgb = torch.sigmoid(raw[...,:3])  # [N_rays, N_samples, 3]
-        print("rgb shape:", rgb.shape)
+        rgb = torch.sigmoid(raw[...,:3])
         noise = 0.
         if raw_noise_std > 0.:
             noise = torch.randn(raw[...,3].shape) * raw_noise_std
-
-            # Overwrite randomly sampled data if pytest
             if pytest:
                 np.random.seed(0)
                 noise = np.random.rand(*list(raw[...,3].shape)) * raw_noise_std
                 noise = torch.Tensor(noise)
-
-        alpha = raw2alpha(raw[...,3] + noise, dists)  # [N_rays, N_samples]
-        # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
+        alpha = raw2alpha(raw[...,3] + noise, dists)
         weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
-        rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
 
+        rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
         depth_map = torch.sum(weights * z_vals, -1)
         disp_map = 1./torch.max(1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1))
         acc_map = torch.sum(weights, -1)
-        print("weight shape:", weights.shape)
 
     if white_bkgd:
-        if saliency:
-            saliency_map = saliency_map + (1.-acc_map[...,None])
-        elif clip:
+        if clip:
             clip_map = clip_map + (1.-acc_map[...,None])
         else:
             rgb_map = rgb_map + (1.-acc_map[...,None])
@@ -574,9 +557,7 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
         # return rgb_map, disp_map, acc_map, weights, depth_map, saliency_map
     # else:
     #     return rgb_map, disp_map, acc_map, weights, depth_map
-    if saliency:
-        return saliency_map, disp_map, acc_map, weightsS, depth_map
-    elif clip:
+    if clip:
         return clip_map, disp_map, acc_map, weightsCLIP, depth_map
     else:
         return rgb_map, disp_map, acc_map, weights, depth_map
@@ -1203,6 +1184,12 @@ def train(env, flag, test_file, i_weights):
     
     start = start + 1
     for i in trange(start, N_iters):
+        if(i < 80000 ):
+            train_rgb = True
+            train_clip = False
+        else:
+            train_rgb = False
+            train_clip = True
         time0 = time.time()
         print("iter_______: ", i)
         if use_batching:
@@ -1294,43 +1281,44 @@ def train(env, flag, test_file, i_weights):
                     saliency_s = saliency_s[:,0]
                 #clip_s             
                 if args.with_clip:
+                    rgb_s = target[select_coords[:, 0], select_coords[:, 1]]
                     clip_s = clip[select_coords[:, 0], select_coords[:, 1]]
 
-        #clip_est = Model()
-        if args.with_saliency:
-            saliency, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
-                                                verbose=i < 10, retraw=True,
-                                                **render_kwargs_train, use_saliency= TRUE, use_CLIP = False)
-        elif args.with_clip:
-            clip_est, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
+
+        if args.with_clip:
+            ret_rgb_list, ret_clip_list = render(H, W, K, chunk=args.chunk, rays=batch_rays,
                                     verbose=i < 10, retraw=True,
                                     **render_kwargs_train, use_saliency= False, use_CLIP = True)
+            rgb_est = ret_rgb_list[0]
+            rgb_est = normalize(rgb_est, p = 2, dim = -1)
+            clip_est = ret_clip_list[0]
             clip_est = normalize(clip_est, p = 2, dim = -1)
+            print("rgb_s: ", rgb_s[0,:3])
+            print("rgb_est: ", rgb_est[0,:3])
             print("clip_s: ", clip_s[0,:3])
             print("clip_est: ", clip_est[0,:3])
-            #clips_ests_normalized = (clip_est - torch.unsqueeze(torch.min(clip_est,1)[0],-1)) / (torch.unsqueeze(torch.max(clip_est,1)[0],-1) - torch.unsqueeze(torch.min(clip_est,1)[0],-1))
-        else:
-            rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
-                                                verbose=i < 10, retraw=True,
-                                                **render_kwargs_train)
+
         #loss: dot product
         optimizer.zero_grad()
-        if args.with_saliency:
-            img_loss = img2mse(saliency, saliency_s)
-        elif args.with_clip:
-            img_loss = clip_loss(clip_est, clip_s) #torch.Size([4096, 768])
-        else:
-            img_loss = img2mse(rgb, target_s)
-        trans = extras['raw'][...,-1]
-        loss = img_loss
-        print("training loss: ", loss)
-        losses.append(loss.cpu().detach().numpy())
-        psnr = mse2psnr(img_loss)
+        if train_rgb:
+            img_loss = l1_loss(rgb_est, rgb_s)
+            print("training rgb_loss: ", img_loss)
+            psnr = mse2psnr(img_loss)
+            print("training rgb_psnr: ", psnr)
+        if train_clip:
+            img_loss = clip_loss(clip_est, clip_s)
+            print("training clip_loss: ", img_loss)
+            psnr = mse2psnr(img_loss)
+            print("training clip_psnr: ", psnr)
+        losses.append(img_loss.cpu().detach().numpy())
+
+        """
         if 'rgb0' in extras:
             img_loss0 = img2mse(extras['rgb0'], target_s)
             loss = loss + img_loss0
             psnr0 = mse2psnr(img_loss0)
-        loss.backward()
+        """
+        img_loss.backward()
         optimizer.step()
         #Update
         decay_rate = 0.1
@@ -1375,7 +1363,7 @@ def train(env, flag, test_file, i_weights):
             print('Saved test set')
 
         if i%args.i_print==0:
-            tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
+            tqdm.write(f"[TRAIN] Iter: {i} Loss: {img_loss.item()}  PSNR: {psnr.item()}")
         """
             print(expname, i, psnr.numpy(), loss.numpy(), global_step.numpy())
             print('iter time {:.05f}'.format(dt))

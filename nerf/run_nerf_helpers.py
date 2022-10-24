@@ -11,6 +11,7 @@ from torch.nn.functional import normalize as nn_normalize
 
 # Misc
 img2mse = lambda x, y : torch.mean((y-x) ** 2)
+l1_loss = lambda x, y : torch.mean(torch.abs(y-x))
 #clip_loss = lambda x, y : torch.dot(y, x) / (torch.norm(y) * torch.norm(x))
 mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
@@ -104,78 +105,46 @@ class NeRF(nn.Module):
             self.alphaS_linear = nn.Linear(W, 1)
             self.saliency_linear = nn.Linear(W//2, 1)
         if with_CLIP:
-            self.featureCLIP_linear = nn.Linear(W, W)
+            #RGB branch
+            self.alpha_linear = nn.Linear(W, 1)
+            self.feature_linear = nn.Linear(W, W)
+            self.rgb_linear = nn.Linear(W//2, 3)
+            #CLIP branch
             self.alphaCLIP_linear = nn.Linear(W, 1)
+            self.featureCLIP_linear = nn.Linear(W, W)
             self.CLIP_linear = nn.Linear(W//2, self.clip_dim)
+            
 
     def forward(self, x):
+        #Main body
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)
-        h = input_pts
-        #print("________x")
-        #print(x)
-        #print("________h")
-        #print(h)
+        h_original = input_pts
         for i, l in enumerate(self.pts_linears):
-            h = self.pts_linears[i](h)
-            h = F.relu(h)
+            h_original = self.pts_linears[i](h_original)
+            h_original = F.relu(h_original)
             if i in self.skips:
-                h = torch.cat([input_pts, h], -1)
-        #print(h.shape) torch.Size([65536, 256])
-        #__________________
-        #print("________h")
-        #print(h)
-        if self.with_saliency:
-            alphaS = self.alphaS_linear(h)
-            featureS = self.featureS_linear(h)
-            hs = torch.cat([featureS, input_views], -1)
-        
-            for i, l in enumerate(self.views_linears):
-                hs = self.views_linears[i](hs)
-                hs = F.relu(hs)
+                h_original = torch.cat([input_pts, h_original], -1)
+        #RGB branch
+        alpha = self.alpha_linear(h_original)
+        feature = self.feature_linear(h_original)
+        h = torch.cat([feature, input_views], -1)
+        for i, l in enumerate(self.views_linears):
+            h = self.views_linears[i](h)
+            h = F.relu(h)
+        rgb = self.rgb_linear(h)
+        #CLIP branch
+        alphaCLIP = self.alphaCLIP_linear(h_original)
+        featureCLIP = self.featureCLIP_linear(h_original)
+        hs = torch.cat([featureCLIP, input_views], -1)
+        for i, l in enumerate(self.views_linears):
+            hs = self.views_linears[i](hs)
+            hs = F.relu(hs)
+        CLIP_val = self.CLIP_linear(hs)
+        #Outputs
+        outputs_rgb = torch.cat([rgb, alpha], -1)
+        outputs_clips = torch.cat([CLIP_val, alphaCLIP * alpha], -1) #torch.Size([65536, 769])
+        return outputs_rgb, outputs_clips
 
-            saliency = self.saliency_linear(hs)
-            outputsS = torch.cat([saliency, alphaS], -1)
-        if self.with_CLIP:
-            alphaCLIP = self.alphaCLIP_linear(h)
-            #print("________alphaCLIP")
-            #print(alphaCLIP)
-            featureCLIP = self.featureCLIP_linear(h)
-            #print("________featureCLIP")
-            #print(featureCLIP)
-            hs = torch.cat([featureCLIP, input_views], -1)
-            for i, l in enumerate(self.views_linears):
-                hs = self.views_linears[i](hs)
-                hs = F.relu(hs)
-
-            CLIP_val = self.CLIP_linear(hs)
-            #print("________CLIP_val")
-            #print(CLIP_val)
-            outputsS = torch.cat([CLIP_val, alphaCLIP], -1)
-        #__________________
-        if self.use_viewdirs:
-            alpha = self.alpha_linear(h)
-            feature = self.feature_linear(h)
-            h = torch.cat([feature, input_views], -1)
-        
-            for i, l in enumerate(self.views_linears):
-                h = self.views_linears[i](h)
-                h = F.relu(h)
-
-            rgb = self.rgb_linear(h)
-            # print("rgb, saliency", rgb.shape, saliency.shape)
-            if self.with_saliency:
-                outputs = torch.cat([saliency, alphaS], -1)
-            else: 
-                outputs = torch.cat([rgb, alpha], -1)
-        else:
-            outputs = self.output_linear(h)
-            if self.with_saliency:
-                outputs = torch.cat([saliency, alphaS], -1)
-            if self.with_CLIP:
-                outputs = torch.cat([CLIP_val, alphaCLIP], -1) #torch.Size([65536, 769])
-            #print("________outputs")
-            #print(outputs)
-        return outputs    
 
     def load_weights_from_keras(self, weights):
         assert self.use_viewdirs, "Not implemented if use_viewdirs=False"
