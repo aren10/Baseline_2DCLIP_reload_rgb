@@ -788,12 +788,20 @@ def render_query_video(text_embedding_address, render_poses, hwf, K, chunk, rend
         W = W//render_factor
         focal = focal/render_factor
     queries = []
-    disps = []
+    clips_disps = []
+    rgb_ests = []
+    rgb_disps = []
     t = time.time()
     for i, c2w in enumerate(tqdm(render_poses)):
         #print(i, time.time() - t)
         t = time.time()
-        clips_est, disp, acc, _ = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs, use_CLIP=use_clip)
+        ret_rgb_list, ret_clip_list = render(H, W, K, chunk=chunk, c2w=c2w[:3,:4], **render_kwargs, use_CLIP=use_clip)
+        rgb_est = ret_rgb_list[0]
+        rgb_disp = ret_rgb_list[1]
+        rgb_ests.append(rgb_est.cpu().float().numpy())
+        rgb_disps.append(rgb_disp.cpu().float().numpy())
+        clips_est = ret_clip_list[0]
+        clips_disp = ret_clip_list[1]
         clips_est = torch.Tensor(clips_est).to(device)
         clips_est = normalize(clips_est, p = 2, dim = -1)
         nerf_img_clip = clips_est
@@ -817,16 +825,18 @@ def render_query_video(text_embedding_address, render_poses, hwf, K, chunk, rend
         query_map_3d[:,:,1] = query_map_remapped
         query_map_3d[:,:,2] = query_map_remapped
         queries.append(query_map_3d)
-        disps.append(disp.cpu().numpy())
+        clips_disps.append(clips_disp.cpu().numpy())
         if savedir is not None:
             np.save(savedir, '{:03d}_clips_est'.format(i), clips_est.cpu())
         if gt_imgs is not None:
             imgs = to8b(gt_imgs[-1])
             filename = os.path.join(savedir, '{:03d}_gt.png'.format(i))
             imageio.imwrite(filename, imgs)
+    rgb_ests = np.stack(rgb_ests, 0)
+    rgb_disps = np.stack(rgb_disps, 0)
     queries = np.stack(queries, 0)
-    disps = np.stack(disps, 0)
-    return queries, disps
+    clips_disps = np.stack(clips_disps, 0)
+    return rgb_ests, rgb_disps, queries, clips_disps
 
 """
 def render_compressed_feature_video(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, savedir=None, render_factor=0, use_clip = False):
@@ -1033,12 +1043,11 @@ def train(env, flag, test_file, i_weights):
 
     if args.render_query_video:
         with torch.no_grad():
-            queries,queries_disps = render_query_video(args.root_path + "Nesf0_2D/" + args.text + "_clip_feature.npy", render_poses, hwf, K, args.chunk, render_kwargs_test, use_clip = True)
-            rgbs, rgbs_disps = render_path(render_poses, hwf, K, args.chunk, render_kwargs_test)
-        imageio.mimwrite(args.root_path + "Nesf0_2D/render_query_video.mp4", to8b(queries), fps=30, quality=8)
-        imageio.mimwrite(args.root_path + "Nesf0_2D/render_query_video_disp.mp4", to8b(queries_disps / np.max(queries_disps)), fps=30, quality=8)
-        imageio.mimwrite(args.root_path + "Nesf0_2D/render_path.mp4", to8b(rgbs), fps=30, quality=8)
-        imageio.mimwrite(args.root_path + "Nesf0_2D/render_path_disp.mp4", to8b(rgbs_disps / np.max(rgbs_disps)), fps=30, quality=8)
+            rgb_ests, rgb_disps, queries, clips_disps = render_query_video(args.root_path + "Nesf0_2D/" + args.text + "_clip_feature.npy", render_poses, hwf, K, args.chunk, render_kwargs_test, use_clip = True)
+        imageio.mimwrite(args.root_path + "Nesf0_2D/queries.mp4", to8b(queries), fps=30, quality=8)
+        imageio.mimwrite(args.root_path + "Nesf0_2D/queries_disps.mp4", to8b(clips_disps / np.max(clips_disps)), fps=30, quality=8)
+        imageio.mimwrite(args.root_path + "Nesf0_2D/rgb_ests.mp4", to8b(rgb_ests), fps=30, quality=8)
+        imageio.mimwrite(args.root_path + "Nesf0_2D/rgb_disps.mp4", to8b(rgb_disps / np.max(rgb_disps)), fps=30, quality=8)
         return
     """
     if args.render_compressed_feature_video:

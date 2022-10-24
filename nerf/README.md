@@ -11,28 +11,29 @@ git clone https://github.com/aren10/Baseline_2DCLIP_reload_rgb.git
 cd Baseline_2DCLIP_reload_rgb
 rm -r logs
 cd nerf
-scp -r /Users/jfgvl1187/Desktop/logs.zip aren10@ssh.ccv.brown.edu:/users/aren10/Baseline_2DCLIP_reload/nerf/logs.zip
+scp -r /Users/jfgvl1187/Desktop/logs.zip aren10@ssh.ccv.brown.edu:/users/aren10/Baseline_2DCLIP_reload_rgb/nerf/logs.zip
 unzip logs.zip
 python run_nerf.py --env linux --flag train --i_weights 10000
-python run_nerf.py --env linux --flag test --test_file 099000.tar
-python run_nerf.py --env linux --flag video --test_file 099000.tar
+python run_nerf.py --env linux --flag test --test_file 100000.tar
+python run_nerf.py --env linux --flag video --test_file 100000.tar
 ctrl + z
 cd /users/aren10/data/toybox-13/0
 scp /Users/jfgvl1187/Desktop/metadata.json aren10@ssh.ccv.brown.edu:/users/aren10/data/0/metadata.json
 
 scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/nerf_query_map.png /Users/jfgvl1187/Desktop/nerf_query_map.png 
 scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/gt_query_map.png /Users/jfgvl1187/Desktop/gt_query_map.png
+scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/rgb_est_img.png /Users/jfgvl1187/Desktop/rgb_est_img.png
+scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/rgb_gt_img.png /Users/jfgvl1187/Desktop/rgb_gt_img.png
 
-scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/render_query_video.mp4 /Users/jfgvl1187/Desktop/render_query_video.mp4
-scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/render_query_video_disp.mp4 /Users/jfgvl1187/Desktop/render_query_video_disp.mp4
+scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/queries.mp4 /Users/jfgvl1187/Desktop/queries.mp4
+scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/queries_disps.mp4 /Users/jfgvl1187/Desktop/queries_disps.mp4
+scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/rgb_ests.mp4 /Users/jfgvl1187/Desktop/rgb_ests.mp4
+scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/rgb_disps.mp4 /Users/jfgvl1187/Desktop/rgb_disps.mp4
 
-scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/render_path.mp4 /Users/jfgvl1187/Desktop/render_path.mp4
-scp aren10@ssh.ccv.brown.edu:/users/aren10/data/Nesf0_2D/render_path_disp.mp4 /Users/jfgvl1187/Desktop/render_path_disp.mp4
-
-scp -r aren10@ssh.ccv.brown.edu:/users/aren10/Baseline_2DCLIP_reload/nerf/losses.png /Users/jfgvl1187/Desktop/losses.png
+scp -r aren10@ssh.ccv.brown.edu:/users/aren10/Baseline_2DCLIP_reload_rgb/nerf/losses.png /Users/jfgvl1187/Desktop/losses.png
 
 zip -r logs.zip logs
-scp -r aren10@ssh.ccv.brown.edu:/users/aren10/Baseline_2DCLIP_reload/nerf/logs.zip /Users/jfgvl1187/Desktop/logs.zip
+scp -r aren10@ssh.ccv.brown.edu:/users/aren10/Baseline_2DCLIP_reload_rgb/nerf/logs.zip /Users/jfgvl1187/Desktop/logs.zip
 rm -r logs
 rm logs.zip
 
