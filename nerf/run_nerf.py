@@ -538,7 +538,7 @@ def raw2outputs(raw, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=F
                 np.random.seed(0)
                 noise = np.random.rand(*list(raw[...,3].shape)) * raw_noise_std
                 noise = torch.Tensor(noise)
-        alpha = raw2alpha_relu(raw[...,3] + noise, dists)
+        alpha = raw2alpha_sigmoid(raw[...,3] + noise, dists)
         weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1.-alpha + 1e-10], -1), -1)[:, :-1]
 
         rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
