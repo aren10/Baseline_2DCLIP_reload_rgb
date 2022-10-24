@@ -345,8 +345,8 @@ def render_CLIP_path(render_poses, hwf, K, chunk, render_kwargs, gt_imgs=None, s
             filename = os.path.join(savedir, '{:03d}_gt.png'.format(i))
             imageio.imwrite(filename, imgs)
         """
-    rgb_ests = np.stack(clips_ests, 0)
-    rgb_disps = np.stack(clips_disps, 0)
+    rgb_ests = np.stack(rgb_ests, 0)
+    rgb_disps = np.stack(rgb_disps, 0)
     clips_ests = np.stack(clips_ests, 0)
     clips_disps = np.stack(clips_disps, 0)
     return rgb_ests, rgb_disps, clips_ests, clips_disps
@@ -1103,6 +1103,8 @@ def train(env, flag, test_file, i_weights):
                     rgbs_ests = torch.Tensor(rgbs_ests).to(device)
                     #rgbs_ests = normalize(rgbs_ests, p = 2, dim = -1) 
                     #loss
+                    print(rgbs_ests.size())
+                    print(images.size())
                     print("rgb_loss in test is: ", l1_loss(rgbs_ests[0,:,:,:], images[0,:,:,:]))
                     print("clip_loss in test is: ", clip_loss(clips_ests[0,:,:,:], clips[0,:,:,:]))
                     #nerf_query_map
@@ -1128,11 +1130,11 @@ def train(env, flag, test_file, i_weights):
                     query_map_3d[:,:,2] = query_map_remapped
                     plt.imshow(query_map_3d)
                     plt.imsave(args.root_path + "Nesf0_2D/nerf_query_map.png", query_map_3d)
-                    rgb_est_img = torch.tensor(np.squeeze(rgbs_ests[0,:,:,:].cpu().detach().numpy()))
+                    rgb_est_img = np.squeeze(rgbs_ests[0,:,:,:].cpu().detach().numpy())
                     rgb_est_img_remapped = (rgb_est_img - np.min(rgb_est_img)) / (np.max(rgb_est_img) - np.min(rgb_est_img))
                     plt.imsave(args.root_path + "Nesf0_2D/rgb_est_img.png", rgb_est_img_remapped)
                     #gt_query_map
-                    gt_img_clip = np.squeeze(clips[0,:,:,:].cpu().detach().numpy())
+                    gt_img_clip = torch.tensor(np.squeeze(clips[0,:,:,:].cpu().detach().numpy()))
                     image_features_normalized = gt_img_clip
                     image_features_normalized = image_features_normalized.to(torch.float) #text_features_normalized = (text_features - torch.min(text_features)) / (torch.max(text_features) - torch.min(text_features))
                     r,c,f = image_features_normalized.size()
